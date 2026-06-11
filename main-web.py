@@ -10,7 +10,6 @@ from langchain_classic.chains import (   create_retrieval_chain )
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 
 from langchain_core.prompts import (   ChatPromptTemplate )
-from langchain_core.callbacks import (   BaseCallbackHandler )
 
 st.title("📄 PDF File Reader")
 st.write("----------------")
@@ -38,34 +37,6 @@ def pdf_to_document(uploaded_file):
 
     pages = loader.load()
     return pages
-
-class StreamHandler(
-    BaseCallbackHandler
-):
-
-
-    """
-    GPT가 토큰을 생성할 때마다
-    Streamlit 화면에 출력하는 Handler
-
-    예:
-    GPT:   안녕하세요
-    생성 과정:
-    안
-    안녕
-    안녕하세요
-
-    처럼 실시간 출력
-    """
-    def __init__(  self,    container  ):
-        self.container = container
-        self.text = ""
-
-    def on_llm_new_token(  self,  token,   **kwargs ):
-        # 새 토큰 누적
-        self.text += token
-        # 화면 갱신
-        self.container.markdown(    self.text  )
 
 if uploaded_file is not None:
     pages = pdf_to_document(   uploaded_file   )
@@ -97,21 +68,15 @@ if uploaded_file is not None:
     question = st.text_input(   "질문 입력"    )
 
     if st.button(   "질문하기"   ):
-        if question == "":
+        if not question.strip():
             st.warning( "질문을 입력하세요"   )
         else:
             with st.spinner(  "답변 생성중..."     ):
-
-                chat_box = st.empty()
-
-                handler = StreamHandler(      chat_box       )
-
                 llm = ChatOpenAI(
-                    model="gpt-4.1-mini",
+                    model="gpt-4o-mini",
                     temperature=0,
                     api_key=openai_key,
                     streaming=True,
-                    callbacks=[ handler  ]
                 )
 
                 prompt = ChatPromptTemplate.from_template(
@@ -123,11 +88,12 @@ if uploaded_file is not None:
                     """
                 )
 
-                document_chain = ( create_stuff_documents_chain(   llm,    prompt    )   )
+                document_chain = create_stuff_documents_chain(llm, prompt)
+                qa_chain = create_retrieval_chain(retriever, document_chain)
 
-                qa_chain = create_retrieval_chain(
-                    retriever,
-                    document_chain
-                )
+                def stream_answer():
+                    for chunk in qa_chain.stream({"input": question}):
+                        if answer_chunk := chunk.get("answer"):
+                            yield answer_chunk
 
-                qa_chain.invoke(    {    "input": question    }      )
+                st.write_stream(stream_answer)
